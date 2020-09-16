@@ -1,24 +1,34 @@
+/**
+ * This program was created by referring to BLE_Client.ino 
+ * in the example sketch ESP32.
+ * @author Minoru Inoue
+ */
+
 #include <M5Core2.h>
 #include <Fonts/EVA_20px.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include "BLEDevice.h"
-//#include "BLEScan.h"
 
-// The remote service we wish to connect to.
-static BLEUUID serviceUUID("xxxxxxxxxxxxxxxxxxxxxxx");
-// The characteristic of the remote service we are interested in.
-static BLEUUID    charUUID("10B20106-5B3B-4571-9508-CF3EFCD7BBAE");
+// toioのサービスUUID(xxxx...には自分のtoioのUUIDを入れる)
+static BLEUUID serviceUUID("xxxxxxxxxxxxxxxxxx");
+// モーションセンサーのCharacteristic UUID
+static BLEUUID    motionSensorUUID("10B20106-5B3B-4571-9508-CF3EFCD7BBAE");
+// モーターのCharacteristic UUID
 static BLEUUID    motorUUID("10B20102-5B3B-4571-9508-CF3EFCD7BBAE");
 
-static boolean doConnect = false;
-static boolean connected = false;
-static boolean doScan = false;
-static BLERemoteCharacteristic* pRemoteCharacteristic;
-static BLERemoteCharacteristic* pRemoteCharacteristic2;
+// 接続の状態
+static boolean isDoConnect = false;
+static boolean isConnected = false;
+static boolean isDoScan = false;
+
+// BLE操作用
+static BLERemoteCharacteristic* pMotionSensorRemoteCharacteristic;
+static BLERemoteCharacteristic* pMotorRemoteCharacteristic;
 static BLEAdvertisedDevice* myDevice;
 
+// Notify通知時のコールバック
 static void notifyCallback(
   BLERemoteCharacteristic* pBLERemoteCharacteristic,
   uint8_t* pData,
@@ -28,11 +38,7 @@ static void notifyCallback(
     char str[25]="";
     char buf[4]="";
     
-    Serial.print("Notify callback for characteristic ");
-    Serial.print(pBLERemoteCharacteristic->getUUID().toString().c_str());
-    Serial.print(" of data length ");
-    Serial.println(length);
-    Serial.print("data: ");
+    Serial.print("モーションセンサの値: ");
     for(int i = 0;i<length ; i++){
       sprintf(buf,"%d,",(int)*(pData+i));
       strcat(str,buf);
@@ -41,56 +47,47 @@ static void notifyCallback(
     Serial.println(str);
 }
 
+// BLEが接続された or 切れたときのコールバック
 class MyClientCallback : public BLEClientCallbacks {
   void onConnect(BLEClient* pclient) {
+    isConnected = true;
   }
 
   void onDisconnect(BLEClient* pclient) {
-    connected = false;
-    Serial.println("onDisconnect");
+    isConnected = false;
   }
 };
 
-BLERemoteCharacteristic* initChara(BLEClient* pClient, BLERemoteService* pRemoteService,BLEUUID charUUID_){
+// UUID別にBLERemoteCharacteristicオブジェクトを作成する
+BLERemoteCharacteristic* initChara(BLEClient* pClient, BLERemoteService* pRemoteService,BLEUUID characteristicUUID){
   
-    // Obtain a reference to the characteristic in the service of the remote BLE server.
-    pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID_);
-    if (pRemoteCharacteristic == nullptr) {
-      Serial.print("Failed to find our characteristic UUID: ");
-      Serial.println(charUUID_.toString().c_str());
+    pMotionSensorRemoteCharacteristic = pRemoteService->getCharacteristic(characteristicUUID);
+    if (pMotionSensorRemoteCharacteristic == nullptr) {
+      Serial.print("characteristic UUIDが見つかりませんでした: ");
+      Serial.println(characteristicUUID.toString().c_str());
       pClient->disconnect();
       return false;
     }
-    Serial.println(" - Found our characteristic");
+    Serial.println("characteristic UUIDが見つかりました");
 
-    // Read the value of the characteristic.
-    if(pRemoteCharacteristic->canRead()) {
-      std::string value = pRemoteCharacteristic->readValue();
-      Serial.print("The characteristic value was: ");
-      Serial.println(value.c_str());
-    }
-
-    if(pRemoteCharacteristic->canNotify())
-      pRemoteCharacteristic->registerForNotify(notifyCallback);
-
-    
-    return pRemoteCharacteristic;
+    if(pMotionSensorRemoteCharacteristic->canNotify())
+      pMotionSensorRemoteCharacteristic->registerForNotify(notifyCallback);
+   
+    return pMotionSensorRemoteCharacteristic;
 }
 
+// 見つけたBLEデバイスの中にserviceUUIDと同じおのがあったときに接続します。
 bool connectToServer() {
-    Serial.print("Forming a connection to ");
+    Serial.print("接続を確立しています");
     Serial.println(myDevice->getAddress().toString().c_str());
-    
-    BLEClient*  pClient  = BLEDevice::createClient();
-    Serial.println(" - Created client");
 
+    Serial.println("Client側を作成しています");
+    BLEClient*  pClient  = BLEDevice::createClient();
     pClient->setClientCallbacks(new MyClientCallback());
 
-    // Connect to the remove BLE Server.
-    pClient->connect(myDevice);  // if you pass BLEAdvertisedDevice instead of address, it will be recognized type of peer device address (public or private)
-    Serial.println(" - Connected to server");
-
-    // Obtain a reference to the service we are after in the remote BLE server.
+    // toioとつなげます
+    Serial.println("toio(Server側)と接続します");
+    pClient->connect(myDevice);
     BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
     if (pRemoteService == nullptr) {
       Serial.print("Failed to find our service UUID: ");
@@ -98,38 +95,38 @@ bool connectToServer() {
       pClient->disconnect();
       return false;
     }
-    Serial.println(" - Found our service");
+    
+    Serial.println("toioと接続できました");
 
-    pRemoteCharacteristic = initChara(pClient, pRemoteService,charUUID);
-    pRemoteCharacteristic2 = initChara(pClient, pRemoteService,motorUUID);
+    // モーションセンサを取得するためのオブジェクトを作成します。
+    pMotionSensorRemoteCharacteristic = initChara(pClient, pRemoteService,motionSensorUUID);
+    // モーターを操作するためのオブジェクトを作成します。
+    pMotorRemoteCharacteristic = initChara(pClient, pRemoteService,motorUUID);
 
-    connected = true;
+    isConnected = true;
     return true;
 }
-/**
- * Scan for BLE servers and find the first one that advertises the service we are looking for.
- */
+
+// BLEデバイスを検索するためのコールバック
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
- /**
-   * Called for each advertising BLE server.
-   */
+
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    Serial.print("BLE Advertised Device found: ");
+    Serial.print("Advertise中のデバイスがみつかりました:");
     Serial.println(advertisedDevice.toString().c_str());
 
-    // We have found a device, let us now see if it contains the service we are looking for.
+    // toioのService UUIDを見つけたら操作用のオブジェクトを作成する
     if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
 
       BLEDevice::getScan()->stop();
       myDevice = new BLEAdvertisedDevice(advertisedDevice);
-      doConnect = true;
-      doScan = true;
+      isDoConnect = true;
+      isDoScan = true;
 
-    } // Found our server
-  } // onResult
-}; // MyAdvertisedDeviceCallbacks
+    }
+  }
+};
 
-
+// 文字をM5Stack Core2に表示する
 void showStr(char* atitudeStr){
  
   char Str[40];
@@ -141,13 +138,14 @@ void showStr(char* atitudeStr){
   M5.Lcd.printf(Str);
 }
 
+// M5Stack Core2の画面を初期化します。
 void screenInit(){
   M5.Lcd.fillScreen(WHITE);
   M5.Lcd.setTextColor(BLACK);
   M5.Lcd.setTextSize(2);
 }
 
-
+// 関数呼び出し時のCore2上のタッチパネル上のタッチ位置を取得する
 TouchPoint_t touchflush()
 {   
     M5.Lcd.setCursor(10, 10);
@@ -179,6 +177,7 @@ float satNum(float num){
 }
 
 uint8_t data[7];
+// M5Stack Core2のタッチパネル位置をtoioの動作に変換する
 void makeMotorData(TouchPoint_t pos){
   float normalX = (float)pos.x/320;
   float normalY = (float)pos.y/280;
@@ -208,6 +207,7 @@ void makeMotorData(TouchPoint_t pos){
   data[6] = rightWheelPower;
 }
 
+// dataの中身をtoioのモータを停止させるものに初期化する
 void dataInit(){
   data[0] = 0x01;
   data[1] = 0x01;
@@ -218,52 +218,46 @@ void dataInit(){
   data[6] = 0x00;
 }
 
+// M5Stack Core2上のタッチ位置取得とtoioのモータ操作を行う
 void BLECheck() {
-    // If the flag "doConnect" is true then we have scanned for and found the desired
-  // BLE Server with which we wish to connect.  Now we connect to it.  Once we are 
-  // connected we set the connected flag to be true.
-  if (doConnect == true) {
+
+  // BLE機器の探索を開始している場合にserviceUUIDに示すデバイスとの接続を試みる
+  if (isDoConnect == true) {
     if (connectToServer()) {
-      Serial.println("We are now connected to the BLE Server.");
+      Serial.println("toioとつながりました。");
     } else {
-      Serial.println("We have failed to connect to the server; there is nothin more we will do.");
+      Serial.println("toioとの接続に失敗しました。");
     }
-    doConnect = false;
+    isDoConnect = false;
   }
 
-  // If we are connected to a peer BLE Server, update the characteristic each time we are reached
-  // with the current time since boot.
-  if (connected) {
-    String newValue = "Time since boot: " + String((millis())/1000);
-    //Serial.println("Setting new characteristic value to \"" + newValue + "\"");
+  // toioとつながったら、液晶画面のタップ位置の取得とtoioへの操作を行う
+  if (isConnected) {
+    
     TouchPoint_t pos = touchflush();
 
     if(pos.x >= 0 && pos.y >= 0){
       makeMotorData(pos);
-      pRemoteCharacteristic2->writeValue(data,7);
+      pMotorRemoteCharacteristic->writeValue(data,7);
     }else{
       dataInit();
-      pRemoteCharacteristic2->writeValue(data,7);
+      pMotorRemoteCharacteristic->writeValue(data,7);
     }
-    // Set the characteristic's value to be the array of bytes that is actually a string.
-    //pRemoteCharacteristic->writeValue(newValue.c_str(), newValue.length());
-  }else if(doScan){
-    BLEDevice::getScan()->start(0);  // this is just eample to start scan after disconnect, most likely there is better way to do it in arduino
+    
+  }else if(isDoScan){// toioを探す
+    BLEDevice::getScan()->start(0); 
   }
 }
 
 
 
 void setup() {
-  //Serial.begin(115200);
   M5.begin(true, true, true, true);
   screenInit(); 
-  Serial.println("Starting Arduino BLE Client application...");
+  Serial.println("BLEクライアントを作成します");
   BLEDevice::init("");
 
-  // Retrieve a Scanner and set the callback we want to use to be informed when we
-  // have detected a new device.  Specify that we want active scanning and start the
-  // scan to run for 5 seconds.
+  // toioとの接続をこころみる
   BLEScan* pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   pBLEScan->setInterval(1349);
@@ -271,13 +265,12 @@ void setup() {
   pBLEScan->setActiveScan(true);
   pBLEScan->start(5, false);
   dataInit();
-  Serial.println("Setting Done");
-} // End of setup.
+  Serial.println("toioとの接続と設定が完了しました");
+}
 
 
-// This is the Arduino main loop function.
 void loop() {
   BLECheck();
   
   delay(10);
-} // End of loop
+}
