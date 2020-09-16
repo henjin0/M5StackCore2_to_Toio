@@ -2,6 +2,7 @@
 M5Stack Core2とtoioをBLE経由でつなげてラジコンっぽく遊べるプログラムです。
 
 This program was created by referring to BLE_Client.ino in the example sketch ESP32.
+
 Please see LICENSE .
 
 ## 接続方法
