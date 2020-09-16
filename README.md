@@ -10,7 +10,7 @@ This program is an unofficial implementation based on the technical specificatio
 
 https://toio.github.io/toio-spec/
 
-Please see LICENSE .
+Please see [LICENSE](LICENSE) .
 
 ## 接続方法
 Client.inoにあるserviceUUIDにご自身のtoioのService UUIDをいれてからM5Stack Core2に書き込んでください。
