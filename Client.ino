@@ -12,7 +12,7 @@
 #include "BLEDevice.h"
 
 // toioのサービスUUID(xxxx...には自分のtoioのUUIDを入れる)
-static BLEUUID serviceUUID("xxxxxxxxxxxxxxxxxx");
+static BLEUUID serviceUUID("xxxxx...");
 // モーションセンサーのCharacteristic UUID
 static BLEUUID    motionSensorUUID("10B20106-5B3B-4571-9508-CF3EFCD7BBAE");
 // モーターのCharacteristic UUID
@@ -29,22 +29,26 @@ static BLERemoteCharacteristic* pMotorRemoteCharacteristic;
 static BLEAdvertisedDevice* myDevice;
 
 // Notify通知時のコールバック
+char atitudeStr[25];
 static void notifyCallback(
   BLERemoteCharacteristic* pBLERemoteCharacteristic,
   uint8_t* pData,
   size_t length,
   bool isNotify) {
 
-    char str[25]="";
     char buf[4]="";
     
+    memset(atitudeStr, '\0', sizeof(atitudeStr));
     Serial.print("モーションセンサの値: ");
     for(int i = 0;i<length ; i++){
       sprintf(buf,"%d,",(int)*(pData+i));
-      strcat(str,buf);
+      strcat(atitudeStr,buf);
+      if(i-1 >= 24){
+        break;
+      }
     }
-    showStr(str);
-    Serial.println(str);
+    
+    Serial.println(atitudeStr);
 }
 
 // BLEが接続された or 切れたときのコールバック
@@ -127,14 +131,13 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 };
 
 // 文字をM5Stack Core2に表示する
-void showStr(char* atitudeStr){
+void showAtitude(int posX, int posY){
  
   char Str[40];
-  M5.Lcd.clear(WHITE);
-  M5.Lcd.setCursor(10, 10);
-  M5.Lcd.printf("DISPPLAY Test!");
-  M5.Lcd.setCursor(10, 26);
-  sprintf(Str,"Attitude:%s",atitudeStr);
+  M5.Lcd.fillRect(posX, posY, 320, 20,WHITE);
+  M5.Lcd.setCursor(posX, posY);
+  sprintf(Str,"attde:%s",atitudeStr);
+  M5.Lcd.setTextSize(2);
   M5.Lcd.printf(Str);
 }
 
@@ -176,6 +179,8 @@ float satNum(float num){
   return num;
 }
 
+
+
 uint8_t data[7];
 // M5Stack Core2のタッチパネル位置をtoioの動作に変換する
 void makeMotorData(TouchPoint_t pos){
@@ -207,6 +212,106 @@ void makeMotorData(TouchPoint_t pos){
   data[6] = rightWheelPower;
 }
 
+void drawingPower(TouchPoint_t pos){
+  static int screenCounter= 0;
+  if(screenCounter < 5){
+    screenCounter++;
+    return;
+  }else{
+    screenCounter = 0;
+  }
+  
+  
+  int leftWheelPower = 0;
+  int rightWheelPower = 0;
+  static int beforeLeftWheelPower = 0;
+  static int beforeRightWheelPower = 0;
+  float normalLeftWheelPower = 0;
+  float normalRightWheelPower = 0;
+  
+  if(pos.x >= 0 && pos.y >= 0){
+    float normalX = (float)pos.x/320;
+    float normalY = (float)pos.y/280;
+  
+    normalLeftWheelPower = ((-normalY+0.5)*2)*(satNum(normalX)*2);
+    normalRightWheelPower = ((-normalY+0.5)*2)*(satNum(1-normalX)*2);
+  
+    leftWheelPower = (uint8_t)abs(normalLeftWheelPower*100);
+    rightWheelPower = (uint8_t)abs(normalRightWheelPower*100);
+  }
+
+  // 値が変わらないときは画面を更新しない。
+  if(leftWheelPower!=beforeLeftWheelPower || rightWheelPower!=beforeRightWheelPower){
+    beforeLeftWheelPower = leftWheelPower;
+    beforeRightWheelPower = rightWheelPower;
+  }else{
+    return;
+  }
+  
+  char buf[8];
+  int strPosX = 0;
+  int strPosY = 20;
+  uint16_t leftColor = GREEN;
+  uint16_t rightColor = GREEN;
+  char leftWheelMode[] = {"FORWARD"};
+  char rightWheelMode[] = {"FORWARD"};
+
+  int floorLeftWheelPower = floor(normalLeftWheelPower*100);
+  int floorRightWheelPower = floor(normalRightWheelPower*100);
+  
+  if(floorLeftWheelPower < 0){
+    leftColor = BLUE;
+    strcpy(leftWheelMode,"REVERSE");
+  }else if(floorLeftWheelPower == 0){
+    leftColor = RED;
+  }
+
+  if(floorRightWheelPower < 0){
+    rightColor = BLUE;
+    strcpy(rightWheelMode,"REVERSE");
+  }else if(floorRightWheelPower == 0){
+    rightColor = RED;
+  }
+
+  if(floorRightWheelPower == 0 && floorLeftWheelPower == 0){
+    strcpy(leftWheelMode, "STOP");
+    strcpy(rightWheelMode, "STOP");
+  }
+  
+  M5.Lcd.fillRect(strPosX, strPosY, 160, 65,leftColor);
+  M5.Lcd.fillRect(strPosX+160, strPosY, 160, 65,rightColor);
+  M5.Lcd.setCursor(strPosX, strPosY);
+  sprintf(buf,"%3d,%3d",leftWheelPower,rightWheelPower);
+  M5.Lcd.setTextSize(7);
+  M5.Lcd.setTextColor(BLACK);
+  M5.Lcd.print(buf);
+
+
+  strPosY += 80;
+  M5.Lcd.fillRect(strPosX, strPosY, 320, 30,WHITE);
+  M5.Lcd.setTextSize(3);
+  M5.Lcd.setCursor(strPosX, strPosY);
+  M5.Lcd.setTextColor(leftColor);
+  M5.Lcd.print(leftWheelMode);
+
+  M5.Lcd.setTextSize(3);
+  M5.Lcd.setCursor(strPosX+160, strPosY);
+  M5.Lcd.setTextColor(rightColor);
+  M5.Lcd.print(rightWheelMode);
+
+  
+  strPosY += 60;
+  M5.Lcd.fillRect(strPosX, strPosY, 160, 65,leftColor);
+  M5.Lcd.fillRect(strPosX+160, strPosY, 160, 65,rightColor);
+  sprintf(buf,"%3d,%3d",leftWheelPower,rightWheelPower);
+  M5.Lcd.setCursor(strPosX, strPosY);
+  M5.Lcd.setTextSize(7);
+  M5.Lcd.setTextColor(BLACK);
+  M5.Lcd.print(buf);
+}
+
+
+
 // dataの中身をtoioのモータを停止させるものに初期化する
 void dataInit(){
   data[0] = 0x01;
@@ -233,8 +338,9 @@ void BLECheck() {
 
   // toioとつながったら、液晶画面のタップ位置の取得とtoioへの操作を行う
   if (isConnected) {
-    
     TouchPoint_t pos = touchflush();
+    drawingPower(pos);
+    showAtitude(0,140);
 
     if(pos.x >= 0 && pos.y >= 0){
       makeMotorData(pos);
@@ -255,6 +361,7 @@ void setup() {
   M5.begin(true, true, true, true);
   screenInit(); 
   Serial.println("BLEクライアントを作成します");
+
   BLEDevice::init("");
 
   // toioとの接続をこころみる
@@ -264,12 +371,14 @@ void setup() {
   pBLEScan->setWindow(449);
   pBLEScan->setActiveScan(true);
   pBLEScan->start(5, false);
+
   dataInit();
   Serial.println("toioとの接続と設定が完了しました");
 }
 
 
 void loop() {
+  
   BLECheck();
   
   delay(10);
